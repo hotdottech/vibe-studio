@@ -88,7 +88,7 @@ export function extractExif(arrayBuffer: ArrayBuffer): ImageObject["meta"] {
     make = (image?.Make ?? "").toString().trim() || "Unknown";
     model = normalizeModel((image?.Model ?? "").toString().trim());
 
-    const fl = photo?.FocalLength ?? image?.FocalLength ?? 24;
+    const fl = photo?.FocalLengthIn35mmFormat ?? photo?.FocalLength ?? image?.FocalLength ?? 24;
     focalLength = typeof fl === "number" ? fl : 24;
     iso = Number(photo?.ISOSpeedRatings ?? 0) || 0;
     const et = photo?.ExposureTime ?? image?.ExposureTime;
@@ -133,12 +133,12 @@ export async function extractExifFromHeic(
   let height = 0;
 
   try {
-    const raw = await exifr.parse(input, { pick: ["Make", "Model", "FocalLength", "ISO", "ExposureTime", "DateTimeOriginal", "ImageWidth", "ImageHeight", "ExifImageWidth", "ExifImageHeight"] });
+    const raw = await exifr.parse(input, { pick: ["Make", "Model", "FocalLength", "FocalLengthIn35mmFormat", "ISO", "ExposureTime", "DateTimeOriginal", "ImageWidth", "ImageHeight", "ExifImageWidth", "ExifImageHeight"] });
     if (!raw || typeof raw !== "object") throw new Error("No EXIF");
 
     make = (raw.Make ?? "").toString().trim() || "Unknown";
     model = normalizeModel((raw.Model ?? "").toString().trim());
-    const fl = raw.FocalLength ?? raw.FocalLengthIn35mmFormat ?? 24;
+    const fl = raw.FocalLengthIn35mmFormat ?? raw.FocalLength ?? 24;
     focalLength = typeof fl === "number" ? fl : 24;
     iso = Number(raw.ISO ?? 0) || 0;
     shutter = Number(raw.ExposureTime ?? 0) || 0;

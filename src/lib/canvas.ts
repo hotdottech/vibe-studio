@@ -15,11 +15,49 @@ const RIGHT_X = 1925;
 const FOOTER_RATIO = 0.12; // 12% of image height (Spec 3.2)
 const PAD_RATIO = 0.03; // 3% padding
 
-/** Spec 3.1: Ratio > 1.45 => Tall (Has Watermark). Else standard → custom footer. */
-export function detectWatermark(width: number, height: number): boolean {
-  if (width <= 0) return false;
-  const ratio = height / width;
-  return ratio > 1.45;
+const WHITE_THRESHOLD = 250;
+const BLACK_THRESHOLD = 10;
+const BOTTOM_FRACTION = 0.15;
+const ROW_COVER_THRESHOLD = 0.9;
+
+/**
+ * Detect native watermark by pixel scanning the bottom 15% of the image.
+ * If any row has >90% of pixels as pure white (>250) or pure black (<10), return true.
+ */
+export async function detectWatermark(img: HTMLImageElement): Promise<boolean> {
+  const iw = img.naturalWidth;
+  const ih = img.naturalHeight;
+  if (iw <= 0 || ih <= 0) return false;
+
+  const scanHeight = Math.max(1, Math.floor(ih * BOTTOM_FRACTION));
+  const tw = Math.min(iw, 400);
+  const th = Math.max(1, Math.min(scanHeight, 120));
+
+  const canvas = document.createElement("canvas");
+  canvas.width = tw;
+  canvas.height = th;
+  const tctx = canvas.getContext("2d");
+  if (!tctx) return false;
+
+  tctx.drawImage(img, 0, ih - scanHeight, iw, scanHeight, 0, 0, tw, th);
+
+  const data = tctx.getImageData(0, 0, tw, th);
+  const px = data.data;
+
+  for (let row = 0; row < th; row++) {
+    let whiteCount = 0;
+    let blackCount = 0;
+    for (let col = 0; col < tw; col++) {
+      const i = (row * tw + col) * 4;
+      const r = px[i]!;
+      const g = px[i + 1]!;
+      const b = px[i + 2]!;
+      if (r > WHITE_THRESHOLD && g > WHITE_THRESHOLD && b > WHITE_THRESHOLD) whiteCount++;
+      else if (r < BLACK_THRESHOLD && g < BLACK_THRESHOLD && b < BLACK_THRESHOLD) blackCount++;
+    }
+    if (whiteCount >= tw * ROW_COVER_THRESHOLD || blackCount >= tw * ROW_COVER_THRESHOLD) return true;
+  }
+  return false;
 }
 
 type FooterBg = "white" | "black";
@@ -75,6 +113,7 @@ export function drawFooter(
   ctx.fillText(line2, rightX, line2Y);
 }
 
+/** Center-crop (cover): same aspect as destination so 16:9 images are not stretched. */
 function centerCrop(
   ctx: CanvasRenderingContext2D,
   img: HTMLImageElement,
@@ -85,11 +124,21 @@ function centerCrop(
 ): void {
   const iw = img.naturalWidth;
   const ih = img.naturalHeight;
-  const scale = Math.max(dw / iw, dh / ih);
-  const sw = iw * scale;
-  const sh = ih * scale;
-  const sx = (iw - sw) / 2;
-  const sy = (ih - sh) / 2;
+  if (iw <= 0 || ih <= 0) return;
+  const slotAspect = dw / dh;
+  const imgAspect = iw / ih;
+  let sx: number, sy: number, sw: number, sh: number;
+  if (imgAspect > slotAspect) {
+    sh = ih;
+    sw = ih * slotAspect;
+    sx = (iw - sw) / 2;
+    sy = 0;
+  } else {
+    sw = iw;
+    sh = iw / slotAspect;
+    sx = 0;
+    sy = (ih - sh) / 2;
+  }
   ctx.drawImage(img, sx, sy, sw, sh, dx, dy, dw, dh);
 }
 
@@ -139,8 +188,8 @@ export async function drawComparison(
   const footerH = Math.round(slotH * FOOTER_RATIO);
   const contentH = slotH - footerH;
 
-  // Left slot: 0, 0, SLOT_WIDTH, H_4K
-  const leftHasWatermark = left.meta.hasNativeWatermark ?? detectWatermark(leftImg.naturalWidth, leftImg.naturalHeight);
+  // Left slot: pixel-scan for native watermark (no aspect-ratio check)
+  const leftHasWatermark = await detectWatermark(leftImg);
   if (leftHasWatermark) {
     centerCrop(ctx, leftImg, 0, 0, SLOT_WIDTH, H_4K);
   } else {
@@ -152,8 +201,8 @@ export async function drawComparison(
   ctx.fillStyle = "#000000";
   ctx.fillRect(GUTTER_X, 0, GUTTER_W, H_4K);
 
-  // Right slot: RIGHT_X, 0, SLOT_WIDTH, H_4K
-  const rightHasWatermark = right.meta.hasNativeWatermark ?? detectWatermark(rightImg.naturalWidth, rightImg.naturalHeight);
+  // Right slot
+  const rightHasWatermark = await detectWatermark(rightImg);
   if (rightHasWatermark) {
     centerCrop(ctx, rightImg, RIGHT_X, 0, SLOT_WIDTH, H_4K);
   } else {
