@@ -1,36 +1,64 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Vibe Compare Studio
 
-## Getting Started
+Phase 1 prototype: client-side image ingest, EXIF extraction, and side-by-side comparison. No server uploads; all processing is local.
 
-First, run the development server:
+## Tech Stack
+
+- **Next.js 14** (App Router, TypeScript, Tailwind CSS)
+- **Zustand** – image & log state
+- **@xenova/transformers** – CLIP model (Xenova/clip-vit-base-patch32) in a Web Worker
+- **exif-reader** – EXIF metadata
+- **lucide-react**, **clsx**, **tailwind-merge** – UI
+
+## Setup
 
 ```bash
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000).
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Project Structure
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```
+vibe-compare-studio/
+├── next.config.mjs          # SharedArrayBuffer headers for WebGPU/workers
+├── src/
+│   ├── app/
+│   │   ├── layout.tsx
+│   │   ├── page.tsx         # Dashboard
+│   │   └── globals.css
+│   ├── components/
+│   │   ├── DragDropZone.tsx # FileReader API, local state only
+│   │   ├── ComparisonView.tsx # Canvas side-by-side
+│   │   ├── ImageStrip.tsx   # Thumbnails, L/R selection
+│   │   └── ActivityLog.tsx  # Real-time log
+│   ├── data/
+│   │   └── DeviceMappings.json
+│   ├── hooks/
+│   │   └── useAIWorker.ts   # Worker lifecycle & log
+│   ├── lib/
+│   │   ├── cn.ts
+│   │   ├── dedupe.ts
+│   │   ├── exif.ts
+│   │   └── lens.ts
+│   ├── store/
+│   │   └── useStore.ts      # Zustand (images, logs, selection)
+│   ├── types/
+│   │   └── index.ts         # ImageObject, ComparisonPair
+│   └── worker/
+│       └── ai.worker.ts     # CLIP pipeline in Web Worker
+```
 
-## Learn More
+## Phase 1 Features
 
-To learn more about Next.js, take a look at the following resources:
+- **Drag & drop** – JPG/JPEG/HEIC/PNG; FileReader → Blob URLs; dedupe by name+size+lastModified
+- **EXIF** – Make/Model (with DeviceMappings), FocalLength, ISO, Shutter, DateTimeOriginal, watermark detection
+- **Comparison view** – Two images side-by-side on HTML5 Canvas
+- **AI worker** – Loads Xenova/clip-vit-base-patch32; log shows "Loading AI Model...", "Extracting EXIF...", "Ready"
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Notes
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- COOP/COEP headers are set in `next.config.mjs` for SharedArrayBuffer (Transformers.js/WebGPU).
+- Run in a secure context (e.g. localhost or HTTPS) for Web Workers and optional WebGPU.

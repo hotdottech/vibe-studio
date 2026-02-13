@@ -12,10 +12,16 @@ const nextConfig = {
       },
     ];
   },
-  // Ensure worker and WASM assets are served correctly
+  // Prevent node-specific bindings from being bundled on the client (onnxruntime-node, etc.)
   webpack: (config, { isServer }) => {
-    if (isServer) return config;
-    config.resolve.fallback = { fs: false, path: false };
+    config.resolve.alias = {
+      ...config.resolve.alias,
+      "onnxruntime-node": false,
+      "@huggingface/transformers": false,
+    };
+    if (!isServer) {
+      config.resolve.fallback = { fs: false, path: false, ...config.resolve.fallback };
+    }
     return config;
   },
 };
