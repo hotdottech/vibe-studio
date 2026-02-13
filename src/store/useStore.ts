@@ -86,40 +86,34 @@ export const useStore = create<Store>((set, get) => ({
       return;
     }
 
-    addLog("Extracting EXIF...", "info");
-
     const newImages: ImageObject[] = [];
 
     for (const file of toAdd) {
+      addLog(`Processing ${file.name}...`, "info");
       try {
         let blobToUse: Blob = file;
         let meta: ImageObject["meta"];
 
         if (isHeic(file)) {
-          try {
-            meta = await extractExifFromHeic(file);
-            const { heicTo } = await import("heic-to");
-            blobToUse = await heicTo({ blob: file, type: "image/jpeg", quality: 0.9 });
-          } catch (heicError) {
-            console.error("HEIC Conversion Failed", heicError);
-            throw heicError;
-          }
+          meta = await extractExifFromHeic(file);
+          const { heicTo } = await import("heic-to");
+          blobToUse = await heicTo({ blob: file, type: "image/jpeg", quality: 0.9 });
         } else {
           const arrayBuffer = await readBlobAsArrayBuffer(file);
           meta = extractExif(arrayBuffer);
         }
 
         const url = URL.createObjectURL(blobToUse);
-        const image: ImageObject = {
+        newImages.push({
           id: crypto.randomUUID(),
           file,
           url,
           embedding: [],
           sceneId: null,
           meta,
-        };
-        newImages.push(image);
+        });
       } catch (e) {
+        console.error("Failed to process file:", file.name, e);
         addLog(`Failed to load ${file.name}: ${String(e)}`, "error");
       }
     }

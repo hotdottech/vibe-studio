@@ -5,6 +5,7 @@
 
 import type { ImageObject } from "@/types";
 import { getLensLabel } from "@/lib/lens";
+import { getShutterSpeedDisplay } from "@/lib/exif";
 
 const W_4K = 3840;
 const H_4K = 2160;
@@ -15,49 +16,57 @@ const RIGHT_X = 1925;
 const FOOTER_RATIO = 0.12; // 12% of image height (Spec 3.2)
 const PAD_RATIO = 0.03; // 3% padding
 
-const WHITE_THRESHOLD = 250;
-const BLACK_THRESHOLD = 10;
-const BOTTOM_FRACTION = 0.15;
-const ROW_COVER_THRESHOLD = 0.9;
+const WHITE_THRESHOLD = 230; // lowered for JPEG compression; check r,g,b individually to avoid color casts
+const MAX_FOOTER_FRACTION = 0.2; // stop scanning after 20% of image height
 
 /**
- * Detect native watermark by pixel scanning the bottom 15% of the image.
- * If any row has >90% of pixels as pure white (>250) or pure black (<10), return true.
+ * Get native (white) footer height by scanning rows from the bottom upward.
+ * Stops at 20% of image height or on first non–solid-white row.
+ * Returns height in original image pixels (for use in source crop).
  */
-export async function detectWatermark(img: HTMLImageElement): Promise<boolean> {
+export function getNativeFooterHeight(img: HTMLImageElement): number {
   const iw = img.naturalWidth;
   const ih = img.naturalHeight;
-  if (iw <= 0 || ih <= 0) return false;
+  if (iw <= 0 || ih <= 0) return 0;
 
-  const scanHeight = Math.max(1, Math.floor(ih * BOTTOM_FRACTION));
+  const maxScanRows = Math.floor(ih * MAX_FOOTER_FRACTION);
+  if (maxScanRows <= 0) return 0;
+
   const tw = Math.min(iw, 400);
-  const th = Math.max(1, Math.min(scanHeight, 120));
+  const th = Math.max(1, Math.min(ih, Math.ceil((tw / iw) * ih)));
+  const maxScanInSample = Math.min(th, Math.ceil((maxScanRows / ih) * th));
 
   const canvas = document.createElement("canvas");
   canvas.width = tw;
   canvas.height = th;
   const tctx = canvas.getContext("2d");
-  if (!tctx) return false;
+  if (!tctx) return 0;
 
-  tctx.drawImage(img, 0, ih - scanHeight, iw, scanHeight, 0, 0, tw, th);
-
+  tctx.drawImage(img, 0, 0, iw, ih, 0, 0, tw, th);
   const data = tctx.getImageData(0, 0, tw, th);
   const px = data.data;
 
-  for (let row = 0; row < th; row++) {
-    let whiteCount = 0;
-    let blackCount = 0;
-    for (let col = 0; col < tw; col++) {
-      const i = (row * tw + col) * 4;
-      const r = px[i]!;
-      const g = px[i + 1]!;
-      const b = px[i + 2]!;
-      if (r > WHITE_THRESHOLD && g > WHITE_THRESHOLD && b > WHITE_THRESHOLD) whiteCount++;
-      else if (r < BLACK_THRESHOLD && g < BLACK_THRESHOLD && b < BLACK_THRESHOLD) blackCount++;
+  let footerRows = 0;
+  for (let r = th - 1; r >= th - maxScanInSample && r >= 0; r--) {
+    let sumR = 0, sumG = 0, sumB = 0;
+    for (let c = 0; c < tw; c++) {
+      const i = (r * tw + c) * 4;
+      sumR += px[i]!;
+      sumG += px[i + 1]!;
+      sumB += px[i + 2]!;
     }
-    if (whiteCount >= tw * ROW_COVER_THRESHOLD || blackCount >= tw * ROW_COVER_THRESHOLD) return true;
+    const avgR = sumR / tw;
+    const avgG = sumG / tw;
+    const avgB = sumB / tw;
+    if (avgR > WHITE_THRESHOLD && avgG > WHITE_THRESHOLD && avgB > WHITE_THRESHOLD) {
+      // each channel > 230 to avoid color casts from JPEG artifacts
+      footerRows++;
+    } else {
+      break;
+    }
   }
-  return false;
+
+  return Math.round((footerRows / th) * ih);
 }
 
 type FooterBg = "white" | "black";
@@ -100,44 +109,43 @@ export function drawFooter(
   ctx.stroke();
   ctx.strokeStyle = textColor;
 
-  // Right: focal + f/— and 1/shutter + ISO
+  // Right: focal + aperture and shutter + ISO
   const rightX = divX + pad;
   const line2Y = y + height * 0.65;
   ctx.font = `${baseSize * 0.9}px ${fontFamily}`;
 
-  const line1 = `${getLensLabel(meta.focalLength)} · f/—`;
+  const line1 = `${getLensLabel(meta.focalLength)} · ${meta.aperture}`;
   ctx.fillText(line1, rightX, y + height * 0.35);
 
-  const shutterText = meta.shutter > 0 ? `1/${Math.round(1 / meta.shutter)}s` : "—";
-  const line2 = `${shutterText}  ISO ${meta.iso || "—"}`;
+  const line2 = `${getShutterSpeedDisplay(meta.shutter)}  ISO ${meta.iso || "—"}`;
   ctx.fillText(line2, rightX, line2Y);
 }
 
-/** Center-crop (cover): same aspect as destination so 16:9 images are not stretched. */
-function centerCrop(
+/** Draw image with top portion only (0, 0, iw, sourceHeight) into slot, center-crop. Unified custom footer drawn below. */
+function centerCropFromSource(
   ctx: CanvasRenderingContext2D,
   img: HTMLImageElement,
+  sourceHeight: number,
   dx: number,
   dy: number,
   dw: number,
   dh: number
 ): void {
   const iw = img.naturalWidth;
-  const ih = img.naturalHeight;
-  if (iw <= 0 || ih <= 0) return;
+  if (iw <= 0 || sourceHeight <= 0) return;
   const slotAspect = dw / dh;
-  const imgAspect = iw / ih;
+  const imgAspect = iw / sourceHeight;
   let sx: number, sy: number, sw: number, sh: number;
   if (imgAspect > slotAspect) {
-    sh = ih;
-    sw = ih * slotAspect;
+    sh = sourceHeight;
+    sw = sourceHeight * slotAspect;
     sx = (iw - sw) / 2;
     sy = 0;
   } else {
     sw = iw;
     sh = iw / slotAspect;
     sx = 0;
-    sy = (ih - sh) / 2;
+    sy = (sourceHeight - sh) / 2;
   }
   ctx.drawImage(img, sx, sy, sw, sh, dx, dy, dw, dh);
 }
@@ -188,25 +196,17 @@ export async function drawComparison(
   const footerH = Math.round(slotH * FOOTER_RATIO);
   const contentH = slotH - footerH;
 
-  // Left slot: pixel-scan for native watermark (no aspect-ratio check)
-  const leftHasWatermark = await detectWatermark(leftImg);
-  if (leftHasWatermark) {
-    centerCrop(ctx, leftImg, 0, 0, SLOT_WIDTH, H_4K);
-  } else {
-    centerCrop(ctx, leftImg, 0, 0, SLOT_WIDTH, contentH);
-    drawFooter(ctx, left.meta, 0, contentH, SLOT_WIDTH, footerH, footerBg);
-  }
+  // Smart crop: detect native white footer height per image, crop it off, then ALWAYS draw unified custom footer (mapped names e.g. iPhone 17 Pro Max).
+  const leftFooterPx = getNativeFooterHeight(leftImg);
+  const leftSourceH = Math.max(1, leftImg.naturalHeight - leftFooterPx);
+  centerCropFromSource(ctx, leftImg, leftSourceH, 0, 0, SLOT_WIDTH, contentH);
+  drawFooter(ctx, left.meta, 0, contentH, SLOT_WIDTH, footerH, footerBg);
 
-  // Gutter
   ctx.fillStyle = "#000000";
   ctx.fillRect(GUTTER_X, 0, GUTTER_W, H_4K);
 
-  // Right slot
-  const rightHasWatermark = await detectWatermark(rightImg);
-  if (rightHasWatermark) {
-    centerCrop(ctx, rightImg, RIGHT_X, 0, SLOT_WIDTH, H_4K);
-  } else {
-    centerCrop(ctx, rightImg, RIGHT_X, 0, SLOT_WIDTH, contentH);
-    drawFooter(ctx, right.meta, RIGHT_X, contentH, SLOT_WIDTH, footerH, footerBg);
-  }
+  const rightFooterPx = getNativeFooterHeight(rightImg);
+  const rightSourceH = Math.max(1, rightImg.naturalHeight - rightFooterPx);
+  centerCropFromSource(ctx, rightImg, rightSourceH, RIGHT_X, 0, SLOT_WIDTH, contentH);
+  drawFooter(ctx, right.meta, RIGHT_X, contentH, SLOT_WIDTH, footerH, footerBg);
 }

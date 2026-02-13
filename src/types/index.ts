@@ -13,8 +13,9 @@ export interface ImageObject {
     make: string;
     model: string; // Normalized name
     focalLength: number;
+    aperture: string; // e.g. "f/2.6"
     iso: number;
-    shutter: number;
+    shutter: number; // ExposureTime in seconds
     captureTime: Date;
     hasNativeWatermark: boolean; // Result of detection logic
   };

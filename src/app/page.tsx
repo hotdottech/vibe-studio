@@ -2,7 +2,7 @@
 
 import { DragDropZone } from "@/components/DragDropZone";
 import { ComparisonView } from "@/components/ComparisonView";
-import { ImageStrip } from "@/components/ImageStrip";
+import { SmartGallery } from "@/components/SmartGallery";
 import { ActivityLog } from "@/components/ActivityLog";
 import { useStore } from "@/store/useStore";
 import { useAIWorker } from "@/hooks/useAIWorker";
@@ -44,7 +44,7 @@ export default function Home() {
 
         <section>
           <h2 className="mb-2 text-sm font-medium text-zinc-400">Images</h2>
-          <ImageStrip />
+          <SmartGallery />
         </section>
       </main>
     </div>
