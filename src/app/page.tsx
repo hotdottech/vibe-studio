@@ -8,7 +8,7 @@ import { useStore } from "@/store/useStore";
 import { useAIWorker } from "@/hooks/useAIWorker";
 
 export default function Home() {
-  useAIWorker();
+  const { generateEmbeddings } = useAIWorker();
   const selectedLeft = useStore((s) => s.selectedLeft);
   const selectedRight = useStore((s) => s.selectedRight);
 
@@ -25,7 +25,7 @@ export default function Home() {
 
       <main className="mx-auto max-w-6xl space-y-6 p-6">
         <section>
-          <DragDropZone />
+          <DragDropZone onAdded={generateEmbeddings} />
         </section>
 
         <section className="grid gap-6 lg:grid-cols-3">

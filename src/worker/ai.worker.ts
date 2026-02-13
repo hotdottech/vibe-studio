@@ -1,6 +1,7 @@
 /**
- * AI Worker: runs Transformers.js CLIP pipeline off the main thread.
- * Model: Xenova/clip-vit-base-patch32 (image feature extraction).
+ * AI Worker: Intelligence Engine (Spec 2.3).
+ * Full pipeline via @xenova/transformers; Xenova/clip-vit-base-patch32.
+ * Message types: 'init' (load model), 'embed' (process image → return embedding vector).
  */
 
 import { pipeline } from "@xenova/transformers";
@@ -13,8 +14,8 @@ async function getExtractor() {
   if (extractor) return extractor;
   extractor = await pipeline("image-feature-extraction", MODEL_ID, {
     quantized: true,
-    progress_callback: (data: { status: string }) => {
-      self.postMessage({ type: "progress", status: data?.status ?? "Loading..." });
+    progress_callback: (data: { status?: string }) => {
+      self.postMessage({ type: "progress", message: data?.status ?? "Loading..." });
     },
   });
   return extractor;
@@ -25,9 +26,9 @@ self.onmessage = async (e: MessageEvent<{ type: string; id?: string; url?: strin
 
   try {
     if (type === "init") {
-      self.postMessage({ type: "loading", message: "Loading AI Model..." });
+      self.postMessage({ type: "loading", message: "Loading Model..." });
       await getExtractor();
-      self.postMessage({ type: "ready", message: "AI model ready." });
+      self.postMessage({ type: "ready", message: "Model ready." });
       return;
     }
 
@@ -35,7 +36,7 @@ self.onmessage = async (e: MessageEvent<{ type: string; id?: string; url?: strin
       const ext = await getExtractor();
       type ImageExtractor = (input: string) => Promise<{ data: Float32Array }>;
       const out = await (ext as ImageExtractor)(url);
-      const embedding = Array.from(out.data);
+      const embedding: number[] = Array.from(out.data);
       self.postMessage({ type: "embedding", id, embedding });
       return;
     }

@@ -3,7 +3,29 @@
 import { create } from "zustand";
 import type { ImageObject, LogEntry, LogLevel } from "@/types";
 import { fileDedupeKey } from "@/lib/dedupe";
-import { extractExif } from "@/lib/exif";
+import { extractExif, extractExifFromHeic } from "@/lib/exif";
+import { clusterBySimilarity } from "@/lib/cluster";
+
+function isHeic(file: File): boolean {
+  const type = (file.type ?? "").toLowerCase();
+  const name = (file.name ?? "").toLowerCase();
+  const ext = name.includes(".") ? name.slice(name.lastIndexOf(".")) : "";
+  return (
+    type === "image/heic" ||
+    type === "image/heif" ||
+    ext === ".heic" ||
+    ext === ".heif"
+  );
+}
+
+function readBlobAsArrayBuffer(blob: Blob): Promise<ArrayBuffer> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as ArrayBuffer);
+    reader.onerror = () => reject(reader.error);
+    reader.readAsArrayBuffer(blob);
+  });
+}
 
 type Store = {
   images: ImageObject[];
@@ -15,6 +37,7 @@ type Store = {
   addImages: (files: File[]) => Promise<void>;
   setEmbedding: (id: string, embedding: number[]) => void;
   setSceneId: (id: string, sceneId: string | null) => void;
+  clusterImages: () => void;
   setSelectedLeft: (img: ImageObject | null) => void;
   setSelectedRight: (img: ImageObject | null) => void;
   removeImage: (id: string) => void;
@@ -49,7 +72,7 @@ export const useStore = create<Store>((set, get) => ({
   addImages: async (files: File[]) => {
     const { images, addLog } = get();
     const keys = new Set(images.map((img) => fileDedupeKey(img.file)));
-    const accepted = [".jpg", ".jpeg", ".heic", ".png"];
+    const accepted = [".jpg", ".jpeg", ".heic", ".heif", ".png"];
     const toAdd = files.filter((file) => {
       const ext = file.name.toLowerCase().slice(file.name.lastIndexOf("."));
       if (!accepted.includes(ext)) return false;
@@ -69,9 +92,24 @@ export const useStore = create<Store>((set, get) => ({
 
     for (const file of toAdd) {
       try {
-        const arrayBuffer = await readFileAsArrayBuffer(file);
-        const meta = extractExif(arrayBuffer);
-        const url = URL.createObjectURL(file);
+        let blobToUse: Blob = file;
+        let meta: ImageObject["meta"];
+
+        if (isHeic(file)) {
+          try {
+            meta = await extractExifFromHeic(file);
+            const { heicTo } = await import("heic-to");
+            blobToUse = await heicTo({ blob: file, type: "image/jpeg", quality: 0.9 });
+          } catch (heicError) {
+            console.error("HEIC Conversion Failed", heicError);
+            throw heicError;
+          }
+        } else {
+          const arrayBuffer = await readBlobAsArrayBuffer(file);
+          meta = extractExif(arrayBuffer);
+        }
+
+        const url = URL.createObjectURL(blobToUse);
         const image: ImageObject = {
           id: crypto.randomUUID(),
           file,
@@ -108,6 +146,23 @@ export const useStore = create<Store>((set, get) => ({
     }));
   },
 
+  /** Spec 2.3: cluster by cosine similarity > 0.92, assign sceneId per cluster */
+  clusterImages() {
+    const { images } = get();
+    const withEmbedding = images.filter((img) => img.embedding.length > 0);
+    if (withEmbedding.length === 0) return;
+    const sceneMap = clusterBySimilarity(
+      withEmbedding.map((img) => ({ id: img.id, embedding: img.embedding })),
+      0.92
+    );
+    set((state) => ({
+      images: state.images.map((img) => {
+        const sceneId = sceneMap.get(img.id) ?? null;
+        return sceneId !== null ? { ...img, sceneId } : img;
+      }),
+    }));
+  },
+
   setSelectedLeft(img: ImageObject | null) {
     set({ selectedLeft: img });
   },
@@ -135,12 +190,3 @@ export const useStore = create<Store>((set, get) => ({
     });
   },
 }));
-
-function readFileAsArrayBuffer(file: File): Promise<ArrayBuffer> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result as ArrayBuffer);
-    reader.onerror = () => reject(reader.error);
-    reader.readAsArrayBuffer(file);
-  });
-}

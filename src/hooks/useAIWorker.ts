@@ -5,8 +5,11 @@ import { useStore } from "@/store/useStore";
 
 export function useAIWorker() {
   const workerRef = useRef<Worker | null>(null);
+  const pendingIdsRef = useRef<Set<string>>(new Set());
+
   const addLog = useStore((s) => s.addLog);
   const setEmbedding = useStore((s) => s.setEmbedding);
+  const clusterImages = useStore((s) => s.clusterImages);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -17,14 +20,22 @@ export function useAIWorker() {
     );
     workerRef.current = worker;
 
-    worker.onmessage = (e: MessageEvent<{ type: string; message?: string; id?: string; embedding?: number[] }>) => {
+    worker.onmessage = (
+      e: MessageEvent<{ type: string; message?: string; id?: string; embedding?: number[] }>
+    ) => {
       const { type, message, id, embedding } = e.data ?? {};
       if (type === "loading" || type === "progress") {
         addLog(message ?? "Loading...", "info");
       } else if (type === "ready") {
-        addLog(message ?? "Ready.", "success");
+        addLog(message ?? "Model ready.", "success");
       } else if (type === "embedding" && id && embedding) {
         setEmbedding(id, embedding);
+        pendingIdsRef.current.delete(id);
+        if (pendingIdsRef.current.size === 0) {
+          addLog("Clustering...", "info");
+          clusterImages();
+          addLog("Scenes assigned.", "success");
+        }
       } else if (type === "error") {
         addLog(message ?? "Worker error", "error");
       }
@@ -34,18 +45,28 @@ export function useAIWorker() {
       addLog("AI worker failed to start.", "error");
     };
 
-    addLog("Loading AI Model...", "info");
     worker.postMessage({ type: "init" });
 
     return () => {
       worker.terminate();
       workerRef.current = null;
+      pendingIdsRef.current.clear();
     };
-  }, [addLog, setEmbedding]);
+  }, [addLog, setEmbedding, clusterImages]);
 
-  const computeEmbedding = useCallback((id: string, url: string) => {
-    workerRef.current?.postMessage({ type: "embed", id, url });
-  }, []);
+  const generateEmbeddings = useCallback(() => {
+    const worker = workerRef.current;
+    if (!worker) return;
 
-  return { computeEmbedding };
+    const images = useStore.getState().images.filter((img) => img.embedding.length === 0);
+    if (images.length === 0) return;
+
+    pendingIdsRef.current = new Set(images.map((img) => img.id));
+    for (const img of images) {
+      addLog(`Processing ${img.file.name}...`, "info");
+      worker.postMessage({ type: "embed", id: img.id, url: img.url });
+    }
+  }, [addLog]);
+
+  return { generateEmbeddings };
 }

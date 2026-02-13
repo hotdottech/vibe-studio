@@ -5,30 +5,61 @@ import { Upload } from "lucide-react";
 import { useStore } from "@/store/useStore";
 import { cn } from "@/lib/cn";
 
-const ACCEPT = ".jpg,.jpeg,.heic,.png";
+/** Brute-force accept: image/* by MIME, or HEIC/HEIF by extension (browsers often get MIME wrong). */
+function isAcceptedFile(file: File): boolean {
+  const type = (file.type ?? "").toLowerCase();
+  const name = (file.name ?? "").toLowerCase();
+  return (
+    type.startsWith("image/") ||
+    name.endsWith(".heic") ||
+    name.endsWith(".heif")
+  );
+}
 
-export function DragDropZone() {
+type Props = {
+  onAdded?: () => void;
+};
+
+export function DragDropZone({ onAdded }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
   const addImages = useStore((s) => s.addImages);
   const addLog = useStore((s) => s.addLog);
 
-  const handleFiles = useCallback(
-    (fileList: FileList | null) => {
+  const processFiles = useCallback(
+    (fileList: FileList | null, source: string) => {
       if (!fileList?.length) return;
       const files = Array.from(fileList);
-      addLog(`Dropped ${files.length} file(s). Processing...`);
-      addImages(files);
+      console.log("Files dropped:", files.length, source, files.map((f) => ({ name: f.name, type: f.type || "(empty)" })));
+
+      const accepted: File[] = [];
+      const rejected: File[] = [];
+      for (const file of files) {
+        if (isAcceptedFile(file)) {
+          accepted.push(file);
+          console.log("Accepted:", file.name, file.type || "(no type)");
+        } else {
+          rejected.push(file);
+          console.log("Rejected:", file.name, file.type || "(no type)");
+        }
+      }
+
+      if (accepted.length === 0) {
+        addLog("No image files to add.", "warn");
+        return;
+      }
+      addLog(`Dropped ${accepted.length} file(s). Processing...`);
+      addImages(accepted).then(() => onAdded?.());
     },
-    [addImages, addLog]
+    [addImages, addLog, onAdded]
   );
 
   const onDrop = useCallback(
     (e: React.DragEvent) => {
       e.preventDefault();
       e.stopPropagation();
-      handleFiles(e.dataTransfer.files);
+      processFiles(e.dataTransfer.files, "drop");
     },
-    [handleFiles]
+    [processFiles]
   );
 
   const onDragOver = useCallback((e: React.DragEvent) => {
@@ -38,10 +69,10 @@ export function DragDropZone() {
 
   const onInputChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
-      handleFiles(e.target.files);
+      processFiles(e.target.files, "input");
       e.target.value = "";
     },
-    [handleFiles]
+    [processFiles]
   );
 
   const onClick = useCallback(() => {
@@ -63,7 +94,6 @@ export function DragDropZone() {
       <input
         ref={inputRef}
         type="file"
-        accept={ACCEPT}
         multiple
         onChange={onInputChange}
         className="absolute inset-0 cursor-pointer opacity-0"

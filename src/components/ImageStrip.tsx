@@ -38,6 +38,9 @@ function Thumb({
       )}
       <span className="absolute bottom-0 left-0 right-0 truncate bg-black/70 px-0.5 py-0.5 text-[10px] text-white">
         {image.meta.model || "Unknown"}
+        {image.sceneId && (
+          <span className="ml-0.5 text-emerald-300"> · {image.sceneId.slice(0, 8)}</span>
+        )}
       </span>
     </button>
   );
